@@ -1,92 +1,139 @@
-import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Session, User, AuthResponse } from '@supabase/supabase-js';
+import { Session, User } from '@supabase/supabase-js';
 
-interface AuthContextType {
+type Profile = {
+  id: string;
+  role: 'volunteer' | 'organization';
+  full_name: string;
+  avatar_url?: string;
+};
+
+type AuthContextType = {
   session: Session | null;
   user: User | null;
+  profile: Profile | null;
   loading: boolean;
-  signInWithGoogle: () => Promise<void>;
-  signInWithPassword: (email, password) => Promise<AuthResponse>;
-  signUp: (email, password, fullName) => Promise<AuthResponse>;
   signOut: () => Promise<void>;
-}
+  refreshProfile: () => Promise<void>;
+};
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AuthContext = createContext<AuthContextType>({
+  session: null,
+  user: null,
+  profile: null,
+  loading: true,
+  signOut: async () => {},
+  refreshProfile: async () => {},
+});
 
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [session, setSession] = useState<Session | null>(null);
+export const useAuth = () => {
+  return useContext(AuthContext);
+};
+
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  // Inicializamos loading en true
   const [loading, setLoading] = useState(true);
 
+  // Función para cargar el perfil desde la BD
+  const fetchProfileData = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('⚠️ Error fetching profile:', error.message);
+        return null; // Retornamos null si falla
+      }
+      
+      if (data) {
+        setProfile(data);
+        return data;
+      }
+    } catch (err) {
+      console.error('❌ Unexpected error fetching profile:', err);
+    }
+    return null;
+  };
+
+  const refreshProfile = async () => {
+    if (user) await fetchProfileData(user.id);
+  };
+
   useEffect(() => {
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
+    let mounted = true;
+
+    // Función auxiliar para manejar la sesión y el perfil en orden
+    const handleSession = async (currentSession: Session | null) => {
+      if (!mounted) return;
+
+      if (currentSession?.user) {
+        setSession(currentSession);
+        setUser(currentSession.user);
+        
+        // Buscamos el perfil
+        await fetchProfileData(currentSession.user.id);
+      } else {
+        // Si no hay sesión, limpiamos todo
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+      }
+
+      // IMPORTANTE: Aquí apagamos el loading pase lo que pase
+      if (mounted) {
+        setLoading(false);
+      }
     };
 
-    getSession();
+    // 1. Obtener sesión inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      handleSession(session);
+    });
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
+    // 2. Escuchar cambios
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
+        // Solo reaccionamos si la sesión cambió o si es un evento de Login/Logout explícito
+        // (Para evitar recargas innecesarias, aunque handleSession es seguro)
+        handleSession(session);
       }
     );
 
     return () => {
-      authListener.subscription.unsubscribe();
+      mounted = false;
+      subscription.unsubscribe();
     };
   }, []);
 
-  const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-    });
-    if (error) console.error('Error logging in with Google:', error.message);
-  };
-
-  const signInWithPassword = async (email, password) => {
-    return supabase.auth.signInWithPassword({ email, password });
-  };
-
-  const signUp = async (email, password, fullName) => {
-    return supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          avatar_url: `https://api.dicebear.com/8.x/initials/svg?seed=${encodeURIComponent(fullName)}`
-        },
-      },
-    });
-  };
-
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error('Error logging out:', error.message);
+    setLoading(true); // Opcional: mostrar carga mientras sale
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setSession(null);
+      setProfile(null);
+    } catch (error) {
+      console.error("Error signing out:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const value = {
     session,
     user,
+    profile,
     loading,
-    signInWithGoogle,
-    signInWithPassword,
-    signUp,
     signOut,
+    refreshProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
 };

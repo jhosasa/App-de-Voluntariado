@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { motion } from 'framer-motion';
 import { HeartHandshake, Mail, Lock, User, AlertCircle } from 'lucide-react';
+import toast from 'react-hot-toast'; // Import toast
 
 const SignUpPage = () => {
   const [fullName, setFullName] = useState('');
@@ -20,7 +21,9 @@ const SignUpPage = () => {
     const { error } = await signUp(email, password, fullName);
     if (error) {
       setError(error.message);
+      toast.error(`Error al crear cuenta: ${error.message}`); // Added toast
     } else {
+      toast.success('Cuenta creada correctamente. ¡Bienvenido!'); // Added toast
       navigate('/profile');
     }
     setLoading(false);

@@ -9,6 +9,7 @@ const EventsListPage = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log("!!! 1. ENTRÓ AL USE-EFFECT DE EVENTOS !!!");
     const fetchEvents = async () => {
       setLoading(true);
       const { data, error } = await supabase

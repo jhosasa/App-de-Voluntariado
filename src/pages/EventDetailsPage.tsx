@@ -1,36 +1,96 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext'; // Importamos el contexto de Auth
 import { motion } from 'framer-motion';
-import { Calendar, MapPin, LoaderCircle, Info } from 'lucide-react';
+import { Calendar, MapPin, LoaderCircle } from 'lucide-react';
+import toast from 'react-hot-toast'; // Importamos para las notificaciones
 
 const EventDetailsPage = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth(); // Obtenemos el usuario actual
+  
   const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false); // Estado para el botón de carga
+  const [hasApplied, setHasApplied] = useState(false); // Estado para saber si ya se postuló
   const [error, setError] = useState<string | null>(null);
 
+  // 1. Cargar el evento y verificar si el usuario ya se postuló
   useEffect(() => {
-    const fetchEvent = async () => {
+    const fetchEventAndStatus = async () => {
       if (!id) return;
       setLoading(true);
-      const { data, error } = await supabase
+
+      // A. Cargar datos del evento
+      const { data: eventData, error: eventError } = await supabase
         .from('events')
         .select('*')
         .eq('id', id)
         .single();
 
-      if (error) {
-        console.error('Error fetching event details:', error);
-        setError('No se pudo cargar el evento. Inténtalo de nuevo más tarde.');
+      if (eventError) {
+        console.error('Error fetching event details:', eventError);
+        setError('No se pudo cargar el evento.');
       } else {
-        setEvent(data);
+        setEvent(eventData);
       }
+
+      // B. Si el usuario está logueado, verificar si ya se postuló
+      if (user) {
+        const { data: applicationData } = await supabase
+          .from('volunteer_applications')
+          .select('id')
+          .eq('event_id', id)
+          .eq('user_id', user.id)
+          .single();
+        
+        if (applicationData) {
+          setHasApplied(true);
+        }
+      }
+
       setLoading(false);
     };
 
-    fetchEvent();
-  }, [id]);
+    fetchEventAndStatus();
+  }, [id, user]);
+
+  // 2. Función para manejar el clic en "Postularme"
+  const handleApply = async () => {
+    // Si no está logueado, mandar al login
+    if (!user) {
+      toast.error("Debes iniciar sesión para ser voluntario");
+      navigate('/login');
+      return;
+    }
+
+    setApplying(true);
+
+    try {
+      // Insertar la postulación
+      const { error } = await supabase
+        .from('volunteer_applications')
+        .insert({
+          event_id: id,
+          user_id: user.id,
+          status: 'pending',
+          full_name: user.user_metadata?.full_name || 'Voluntario', // Datos opcionales
+          phone: user.user_metadata?.phone || '',
+        });
+
+      if (error) throw error;
+
+      toast.success('¡Te has postulado correctamente!');
+      setHasApplied(true); // Cambiamos el estado del botón
+    } catch (err: any) {
+      console.error('Error applying:', err);
+      toast.error('Ocurrió un error al enviar tu solicitud.');
+    } finally {
+      setApplying(false);
+    }
+  };
 
   if (loading) {
     return <div className="flex justify-center items-center h-96"><LoaderCircle className="w-12 h-12 animate-spin text-primary" /></div>;
@@ -87,9 +147,30 @@ const EventDetailsPage = () => {
                   <p className="text-sm text-text-secondary">Ubicación del evento</p>
                 </div>
               </div>
-              <button className="w-full bg-primary text-white font-bold py-3 rounded-lg hover:bg-primary/90 transition-all duration-300 transform hover:scale-105 shadow-glow-primary">
-                Quiero ser Voluntario
+              
+              {/* --- BOTÓN CON LÓGICA --- */}
+              <button 
+                onClick={handleApply}
+                disabled={applying || hasApplied}
+                className={`w-full font-bold py-3 rounded-lg transition-all duration-300 transform shadow-glow-primary
+                  ${hasApplied 
+                    ? 'bg-green-600 text-white cursor-default' 
+                    : 'bg-primary text-white hover:bg-primary/90 hover:scale-105'
+                  }
+                  ${applying ? 'opacity-70 cursor-wait' : ''}
+                `}
+              >
+                {applying ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <LoaderCircle className="w-5 h-5 animate-spin" /> Procesando...
+                  </span>
+                ) : hasApplied ? (
+                  "¡Ya estás postulado!"
+                ) : (
+                  "Quiero ser Voluntario"
+                )}
               </button>
+
             </div>
           </div>
         </div>

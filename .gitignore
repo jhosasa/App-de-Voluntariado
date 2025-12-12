@@ -1,0 +1,14 @@
+# Dependencias
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Producción
+build/
+dist/
+
+# Archivos de sistema
+.DS_Store
